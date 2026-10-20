@@ -16,39 +16,69 @@ export function regionFor(domain, currency, hint) {
   return hint || null;
 }
 
+/** Firewall / bot-protection responses: the site is up but would not show us the store. */
+export function isBlocked(res) {
+  if (!res || res.error) return false;
+  if ([401, 403, 406, 429].includes(res.status)) return true;
+  const h = res.headers || {};
+  return res.status === 503 && (Boolean(h['cf-mitigated']) || /cloudflare|sucuri|captcha|just a moment|attention required|challenge/i.test(`${h.server || ''} ${(res.body || '').slice(0, 5000)}`));
+}
+
+/** Store pages that load WooCommerce even when an optimisation plugin strips it from the homepage. */
+async function probeWooCommerce(origin) {
+  const api = await request(`${origin}/wp-json/`, { timeout: 12000, headers: { accept: 'application/json' } });
+  if (!api.error && api.status === 200 && /"wc\/(store|v[123])/.test(api.body || '')) return { via: 'wp-json' };
+  for (const path of ['/shop/', '/cart/']) {
+    const page = await request(origin + path, { timeout: 12000 });
+    if (!page.error && page.status === 200 && fingerprint(page.body).isWooCommerce) return { via: path, html: page.body };
+  }
+  return null;
+}
+
 /**
  * Cheap first pass: is this a reachable WordPress + WooCommerce store, and where is it?
- * Dead or parked domains are checked against the Wayback Machine so lapsed stores still qualify.
+ * Returns status live | erroring | offline (all audit-worthy) or a rejection: blocked | unreachable | parked |
+ * server-error | not-wordpress | no-woocommerce, with a human-readable reason.
  */
 export async function prescreen(domain, { regionHint } = {}) {
   const attempts = [`https://${domain}/`, `https://www.${domain}/`, `http://${domain}/`];
   let home = null;
   for (const url of attempts) {
-    const res = await request(url, { timeout: 15000 });
-    if (!res.error && res.status) { home = res; break; }
-    home = res;
+    home = await request(url, { timeout: 15000 });
+    if (!home.error && home.status) break;
   }
-  const reachable = Boolean(home && !home.error && home.status && home.status < 500);
   const html = home?.body || '';
   const fp = fingerprint(html, home?.headers);
-  const base = { domain, home, fingerprint: fp, reachable, ttfb: home?.ttfb ?? null };
+  const base = { domain, home, fingerprint: fp, ttfb: home?.ttfb ?? null };
+  const reject = (status, reason) => ({ ...base, status, reason });
+  const origin = home?.finalUrl && !home.error ? new URL(home.finalUrl).origin : null;
 
-  if (reachable && fp.isWooCommerce && !fp.parked) {
-    const origin = new URL(home.finalUrl).origin;
-    return { ...base, status: 'live', origin, region: regionFor(new URL(origin).hostname, fp.currency, regionHint) };
-  }
-  if (reachable && !fp.parked && !fp.criticalError && home.status < 400) return { ...base, status: 'not-woocommerce' };
+  if (isBlocked(home)) return reject('blocked', `HTTP ${home.status} from bot protection${home.headers?.server ? ` (${home.headers.server})` : ''}`);
 
-  // Down, erroring, or parked. Was it a WooCommerce store?
-  if (fp.criticalError && fp.isWordPress) {
-    return { ...base, status: 'erroring', origin: new URL(home.finalUrl).origin, region: regionFor(domain, fp.currency, regionHint) };
+  if (!home.error && home.status < 400 && !fp.parked) {
+    if (fp.isWooCommerce) return { ...base, status: 'live', origin, region: regionFor(new URL(origin).hostname, fp.currency, regionHint) };
+    if (fp.criticalError && fp.isWordPress) return { ...base, status: 'erroring', origin, region: regionFor(domain, fp.currency, regionHint) };
+    if (!fp.isWordPress) return reject('not-wordpress', fp.title ? `"${fp.title.slice(0, 60)}"` : 'No WordPress markers');
+    const probe = await probeWooCommerce(origin);
+    if (!probe) return reject('no-woocommerce', 'WordPress without WooCommerce');
+    const merged = probe.html ? fingerprint(probe.html) : fp;
+    const currency = merged.currency || fp.currency;
+    return { ...base, fingerprint: { ...fp, isWooCommerce: true, wcVersion: fp.wcVersion || merged.wcVersion, currency, detectedVia: probe.via }, status: 'live', origin, region: regionFor(new URL(origin).hostname, currency, regionHint) };
   }
+
+  if (!home.error && home.status >= 500 && fp.criticalError && fp.isWordPress) {
+    return { ...base, status: 'erroring', origin, region: regionFor(domain, fp.currency, regionHint) };
+  }
+
+  // Unreachable, parked, or failing: only now ask whether it used to be a WooCommerce store.
   const snap = await waybackSnapshot(domain);
   const past = snap?.html ? fingerprint(snap.html) : null;
   if (past?.isWooCommerce && !isParked(snap.html)) {
     return { ...base, status: 'offline', archived: { timestamp: snap.timestamp, url: snap.url }, fingerprint: { ...past, parked: fp.parked }, region: regionFor(domain, past.currency, regionHint), pastHtml: snap.html };
   }
-  return { ...base, status: 'not-woocommerce' };
+  if (home.error) return reject('unreachable', `${home.error}${home.message ? `: ${home.message.slice(0, 80)}` : ''}`);
+  if (fp.parked) return reject('parked', 'Parked or for-sale page');
+  return reject(home.status >= 500 ? 'server-error' : 'not-wordpress', `HTTP ${home.status}`);
 }
 
 /** Full audit of a prescreened store. Returns { facts, findings, ...score }. */

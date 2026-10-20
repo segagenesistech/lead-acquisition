@@ -22,6 +22,10 @@ export const STORES = {
   'kookaburra.test': { title: 'Kookaburra Tea Co — loose leaf tea', currency: 'AUD', wc: '10.2.1', wp: '6.8.3', plugins: {}, theme: 'kookatheme', products: 30, price: 2400, paymentMethods: [] },
   'healthy.test': { title: 'A healthy skincare store', currency: 'USD', wc: '10.2.1', wp: '6.8.3', plugins: {}, theme: 'storefront', products: 50, price: 3000 },
   'notwoo.test': { title: 'Just a blog', notWoo: true },
+  // Live store behind a firewall that rejects crawlers; the Wayback Machine also knows it as WooCommerce.
+  'blockedstore.test': { title: 'Blocked', blocked: true },
+  // Optimisation plugin strips WooCommerce assets from the homepage; only /wp-json/ reveals the store.
+  'stripped.test': { title: 'Stripped Skincare', currency: 'USD', wc: '6.1.0', wp: '6.8.3', plugins: {}, theme: 'storefront', products: 30, price: 3000, stripped: true, cert: 'expired' },
 };
 
 function homeHtml(s) {
@@ -48,11 +52,14 @@ function storeHandler(req, res) {
   const host = (req.headers.host || '').split(':')[0].replace(/^www\./, '');
   const s = STORES[host];
   if (!s) { res.writeHead(404); return res.end('unknown host'); }
+  if (s.blocked) { res.writeHead(403, { server: 'cloudflare', 'content-type': 'text/html' }); return res.end('<title>Attention Required! | Cloudflare</title>'); }
   const url = new URL(req.url, `http://${host}`);
   const json = (code, body, headers = {}) => { res.writeHead(code, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(body)); };
   const html = (code, body) => { res.writeHead(code, { 'content-type': 'text/html' }); res.end(body); };
   const p = url.pathname;
+  if (p === '/' && s.stripped) return html(200, `<html><head><title>${s.title}</title><link rel="stylesheet" href="/wp-content/themes/${s.theme}/style.css"></head><body>Welcome</body></html>`);
   if (p === '/') return html(200, homeHtml(s));
+  if (p === '/wp-json/') return s.notWoo ? html(404, 'nope') : json(200, { namespaces: ['wp/v2', 'wc/store/v1', 'wc/v3'] });
   if (p === '/robots.txt') return html(200, 'User-agent: *\nDisallow: /wp-admin/\nAllow: /wp-admin/admin-ajax.php\n');
   if (s.notWoo) return html(404, 'not found');
   if (p === '/wp-json/wc/store/v1/products') {
@@ -80,10 +87,19 @@ const PLUGINS = { woocommerce: '10.2.1', 'contact-form-7': '6.1', elementor: '3.
 const THEMES = { storefront: '2025-08-01', kookatheme: '2021-03-01' };
 
 function apiHandler(apiBase) {
+  const seenQueries = new Set();
   return (req, res) => {
     const url = new URL(req.url, 'http://x');
     const json = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
     const p = url.pathname;
+    if (p === '/res/v1/web/search') {
+      const key = req.headers['x-subscription-token'];
+      if (key !== 'good-key') return json(401, { type: 'ErrorResponse', error: { code: 'SUBSCRIPTION_TOKEN_INVALID', detail: 'The provided subscription token is invalid.' } });
+      // Every query is rate-limited once before it succeeds.
+      const q = url.searchParams.get('q') + url.searchParams.get('offset');
+      if (!seenQueries.has(q)) { seenQueries.add(q); res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' }); return res.end('{}'); }
+      return json(200, { web: { results: ['https://lunaroots.test/product/item-1/', 'https://healthy.test/', 'https://www.amazon.com/dp/1'].map((u) => ({ url: u })) } });
+    }
     if (p === '/core/version-check/1.7/') return json(200, { offers: [{ current: '6.8.3' }] });
     if (p === '/plugins/info/1.2/') {
       const slug = url.searchParams.get('request[slug]');
@@ -111,8 +127,8 @@ function apiHandler(apiBase) {
     }
     if (p === '/wayback/available') {
       const target = url.searchParams.get('url');
-      if (target !== 'deadstore.test') return json(200, { archived_snapshots: {} });
-      return json(200, { archived_snapshots: { closest: { available: true, timestamp: '20240301000000', url: `${apiBase}/web/20240301000000/deadstore.test` } } });
+      if (!['deadstore.test', 'blockedstore.test'].includes(target)) return json(200, { archived_snapshots: {} });
+      return json(200, { archived_snapshots: { closest: { available: true, timestamp: '20240301000000', url: `${apiBase}/web/20240301000000/${target}` } } });
     }
     if (p.startsWith('/web/20240301000000id_/')) {
       res.writeHead(200, { 'content-type': 'text/html' });
@@ -141,7 +157,7 @@ export async function startMocks() {
     env: {
       LEADFORGE_HOST_OVERRIDES: JSON.stringify(overrides),
       NODE_EXTRA_CA_CERTS: join(here, 'ca.pem'),
-      WPORG_API: apiBase, RDAP_API: apiBase, PAGESPEED_API: `${apiBase}/pagespeed`, WAYBACK_API: apiBase,
+      BRAVE_API: apiBase, WPORG_API: apiBase, RDAP_API: apiBase, PAGESPEED_API: `${apiBase}/pagespeed`, WAYBACK_API: apiBase,
       DISCOVERY_PROVIDER: 'domains',
     },
     close: () => [httpsSrv, httpSrv, apiSrv].forEach((s) => s.close()),

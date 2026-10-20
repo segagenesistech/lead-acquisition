@@ -29,9 +29,13 @@ export const config = {
   monthlyQuota: Number(env('MONTHLY_AUDIT_QUOTA', 500)),
   auditsPerScan: Number(env('AUDITS_PER_SCAN', 300)),
   concurrency: Number(env('SCAN_CONCURRENCY', 8)),
-  userAgent: `Mozilla/5.0 (compatible; LeadforgeBot/1.0${env('CONTACT_EMAIL', '') ? '; +mailto:' + env('CONTACT_EMAIL') : ''})`,
+  // A browser-style UA (many store firewalls reject bare bot UAs) that still names the crawler for robots.txt and site owners.
+  userAgent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 LeadforgeBot/1.0${env('CONTACT_EMAIL', '') ? ' (+mailto:' + env('CONTACT_EMAIL') + ')' : ''}`,
+  // Minimum gap between search API calls; Brave's free plan allows 1 request per second.
+  searchIntervalMs: Number(env('SEARCH_MIN_INTERVAL_MS', 1100)),
   // External API bases are configurable so tests can point them at a local mock.
   api: {
+    brave: env('BRAVE_API', 'https://api.search.brave.com'),
     wporg: env('WPORG_API', 'https://api.wordpress.org'),
     rdap: env('RDAP_API', 'https://rdap.org'),
     pagespeed: env('PAGESPEED_API', 'https://www.googleapis.com/pagespeedonline/v5/runPagespeed'),

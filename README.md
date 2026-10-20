@@ -12,8 +12,8 @@ npm test                 # unit tests + end-to-end scan against local mock store
 
 ## How a scan works
 
-1. **Discover**: for every keyword (or industry term) × region it runs two footprint queries, e.g. `"organic skincare" inurl:product "add to cart" site:.au`, through your search provider (Brave, SerpApi or Google Programmable Search). Marketplaces (Amazon, Etsy…) are dropped and results are deduplicated to registrable domains (`shop.x.com.au` → `x.com.au`). You can also skip search and paste your own domain list.
-2. **Prescreen** (cheap): fetches the homepage, confirms WordPress + WooCommerce, and assigns a region from the ccTLD (`.com.au`, `.ca`), then the store currency, then the search region. Dead or parked domains are checked against the Wayback Machine, so stores that *used* to run WooCommerce still qualify as lapsed leads.
+1. **Discover**: for every keyword (or industry term) × region it runs two footprint queries through your search provider: `"organic skincare" inurl:product "add to cart" site:.au` on Google/SerpApi, or `"organic skincare" "add to cart" site:.au` on Brave, which has no `inurl:`. Calls are paced and rate-limit responses are retried. Marketplaces (Amazon, Etsy…) are dropped and results are deduplicated to registrable domains (`shop.x.com.au` → `x.com.au`). You can also skip search and paste your own domain list.
+2. **Prescreen** (cheap): fetches the homepage, confirms WordPress + WooCommerce (falling back to `/wp-json/` and `/shop/` when an optimisation plugin hides WooCommerce on the homepage), and assigns a region from the ccTLD (`.com.au`, `.ca`), then the store currency, then the search region. Dead or parked domains are checked against the Wayback Machine, so stores that *used* to run WooCommerce still qualify as lapsed leads.
 3. **Full audit** (top `AUDITS_PER_SCAN`, within the `MONTHLY_AUDIT_QUOTA`), most promising first. An audit less than 7 days old is reused and does not use quota.
 4. **Qualify**: a store becomes a lead if it shows at least one of the rebuild signals you ticked.
 
@@ -50,8 +50,20 @@ Tune the industry benchmarks in `src/config.js` and the loss fractions in `src/a
 | `WPSCAN_API_TOKEN` | Optional; adds known-vulnerability checks for outdated plugins |
 | `MONTHLY_AUDIT_QUOTA`, `AUDITS_PER_SCAN`, `SCAN_CONCURRENCY` | Limits |
 | `CONTACT_EMAIL` | Added to the crawler User-Agent so site owners can contact you |
+| `SEARCH_MIN_INTERVAL_MS` | Gap between search API calls (default 1100, which suits Brave's free plan; lower it on paid plans) |
 
 Recurring searches re-run weekly. The scheduler checks every 10 minutes while the server is running.
+
+## Troubleshooting a scan with no leads
+
+Every scan has a **Scan log** (link in the progress panel, on the Leads page, and on Exports) listing each website it found and why it was kept or skipped: blocked by bot protection, unreachable, not WordPress, WordPress without WooCommerce, outside your regions, or audited with no rebuild signal. Search API failures (bad key, rate limit, credits used up) are shown there too and fail the scan with the provider's message.
+
+Two terminal checks:
+
+```bash
+npm run search-test -- "organic skincare" AU   # is the search key working, and what does it return?
+npm run check -- example.com.au                 # what does the prescreen + audit see for one store?
+```
 
 ## Crawling etiquette and outreach law
 

@@ -128,6 +128,13 @@ const routes = [
     res.end(toCsv(leads(id, q), `http://${req.headers.host}`));
     return undefined;
   }],
+  ['GET', /^\/api\/scans\/(\d+)\/candidates$/, (req, [id]) => {
+    const scan = getDb().prepare('SELECT s.*, se.name FROM scans s JOIN searches se ON se.id = s.search_id WHERE s.id = ?').get(id);
+    if (!scan) return null;
+    const rows = getDb().prepare(`SELECT domain, region, outcome, reason, audit_id auditId FROM scan_candidates WHERE scan_id = ?
+      ORDER BY CASE outcome WHEN 'qualified' THEN 0 WHEN 'healthy' THEN 1 WHEN 'woocommerce' THEN 2 WHEN 'not-audited' THEN 3 ELSE 4 END, outcome, domain`).all(id);
+    return { scan: { id: scan.id, searchId: scan.search_id, name: scan.name, status: scan.status, error: scan.error, progress: JSON.parse(scan.progress) }, candidates: rows };
+  }],
   ['GET', /^\/api\/audits$/, () => getDb().prepare(`SELECT a.id audit_id, s.domain, s.region, s.industry, a.health, a.revenue_at_risk, a.main_signal, a.signals, a.facts, a.created_at
     FROM audits a JOIN stores s ON s.id = a.store_id ORDER BY a.id DESC LIMIT 500`).all().map(leadRow)],
   ['GET', /^\/api\/audits\/(\d+)$/, (req, [id]) => {
@@ -170,9 +177,9 @@ export function createServer() {
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop())) {
-  createServer().listen(config.port, () => {
+  const server = createServer().listen(config.port, () => {
     const p = providerStatus();
-    console.log(`Leadforge running at http://localhost:${config.port}`);
+    console.log(`Leadforge running at http://localhost:${server.address().port}`);
     console.log(`Discovery: ${p.name}${p.ready ? '' : ' (no API key — paste domains in the UI or set one in .env)'}`);
   });
   startScheduler();
