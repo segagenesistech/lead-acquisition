@@ -34,3 +34,8 @@ test('scope estimate scales with queries', () => {
   assert.equal(b, a * 6);
   assert.equal(estimateScope({ domains: ['a.com', 'b.com'] }), 2);
 });
+
+test('queries avoid inurl: for engines that do not support it', () => {
+  const q = buildQueries({ regions: ['US'], keywords: ['tea'], industries: [] }, { inurl: false });
+  assert.ok(q.length === 2 && q.every((x) => !x.q.includes('inurl:') && !x.q.includes('-site:')));
+});

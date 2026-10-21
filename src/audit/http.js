@@ -44,7 +44,8 @@ function once(url, { method = 'GET', headers = {}, body, timeout = 15000, jar } 
     const lib = t.isHttps ? https : http;
     const reqHeaders = {
       'user-agent': config.userAgent,
-      accept: 'text/html,application/json;q=0.9,*/*;q=0.8',
+      accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+      'accept-language': 'en-US,en;q=0.9',
       'accept-encoding': 'gzip, deflate, br',
       host: t.u.host,
       ...headers,
@@ -129,4 +130,18 @@ export async function apiJson(url, { headers = {}, timeout = 20000 } = {}) {
   } catch {
     return null;
   }
+}
+
+/** A third-party API call that reports failures instead of hiding them. */
+export async function apiCall(url, { headers = {}, timeout = 20000 } = {}) {
+  let res;
+  try {
+    res = await fetch(url, { headers: { 'user-agent': config.userAgent, accept: 'application/json', ...headers }, signal: AbortSignal.timeout(timeout) });
+  } catch (e) {
+    return { ok: false, status: 0, error: e.cause?.code || e.name || 'NETWORK_ERROR', message: e.cause?.message || e.message };
+  }
+  const text = await res.text().catch(() => '');
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* non-JSON error page */ }
+  return { ok: res.ok, status: res.status, data, text: text.slice(0, 500), retryAfter: Number(res.headers.get('retry-after')) || null };
 }

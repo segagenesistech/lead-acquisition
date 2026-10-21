@@ -19,7 +19,7 @@ ca = (x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name).publi
       .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True).sign(ca_key, hashes.SHA256()))
 write("ca", ca_key, ca)
 
-hosts = ["*.test", "lunaroots.test", "outbackherbals.test", "maplebloom.test", "pawfect.test", "driftwood.test", "kookaburra.test", "healthy.test", "notwoo.test"]
+hosts = ["*.test", "lunaroots.test", "outbackherbals.test", "maplebloom.test", "pawfect.test", "driftwood.test", "kookaburra.test", "healthy.test", "notwoo.test", "blockedstore.test", "stripped.test"]
 def leaf(name, before, after, serial):
     k = key()
     c = (x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)]))

@@ -17,12 +17,12 @@ export function startScan(searchId) {
 }
 
 /** Run up to `limit` async tasks at once. */
-async function pool(items, limit, fn) {
+async function pool(items, limit, fn, onError) {
   const it = items[Symbol.asyncIterator] ? items[Symbol.asyncIterator]() : items[Symbol.iterator]();
   const workers = Array.from({ length: limit }, async () => {
     for (let n = await it.next(); !n.done; n = await it.next()) {
       // One bad site must not sink the whole scan.
-      try { await fn(n.value); } catch (e) { console.error('scan item failed', e); }
+      try { await fn(n.value); } catch (e) { console.error('scan item failed', n.value?.domain, e); onError?.(n.value, e); }
     }
   });
   await Promise.all(workers);
@@ -46,35 +46,53 @@ export async function runScan(scanId) {
   const search = db.prepare('SELECT * FROM searches WHERE id = ?').get(scan.search_id);
   if (!search) return;
   const params = JSON.parse(search.params);
-  const progress = { phase: 'discovering', queries: params.domains?.length ? 0 : buildQueries(params).length, queriesDone: 0, candidates: 0, checked: 0, woocommerce: 0, audited: 0, reused: 0, qualified: 0, quotaReached: false };
-  const save = (status = 'running', error = null) => db.prepare(`UPDATE scans SET status = ?, progress = ?, error = ?, finished_at = CASE WHEN ? IN ('done','failed') THEN datetime('now') END WHERE id = ?`)
+  const progress = { phase: 'discovering', queries: params.domains?.length ? 0 : buildQueries(params).length, queriesDone: 0, candidates: 0, checked: 0, woocommerce: 0, audited: 0, reused: 0, qualified: 0, quotaReached: false,
+    skipped: {}, searchErrors: 0, lastSearchError: null };
+  const log = (domain, outcome, reason = null, region = null, auditId = null) => {
+    db.prepare(`INSERT INTO scan_candidates (scan_id, domain, region, outcome, reason, audit_id) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(scan_id, domain) DO UPDATE SET region = excluded.region, outcome = excluded.outcome, reason = excluded.reason, audit_id = excluded.audit_id`)
+      .run(scanId, domain, region, outcome, reason, auditId);
+  };
+  const skip = (domain, outcome, reason, region) => { progress.skipped[outcome] = (progress.skipped[outcome] || 0) + 1; log(domain, outcome, reason, region); };
+  let finished = false;
+  const save = (status = 'running', error = null) => {
+    // Workers still in flight after a failure must not flip the scan back to "running".
+    if (finished) return;
+    if (status !== 'running') finished = true;
+    db.prepare(`UPDATE scans SET status = ?, progress = ?, error = ?, finished_at = CASE WHEN ? IN ('done','failed') THEN datetime('now') END WHERE id = ?`)
     .run(status, JSON.stringify(progress), error, status, scanId);
+  };
+  const crashed = (item, e) => skip(item.domain, 'error', e.message?.slice(0, 200));
   save();
 
   try {
     // 1. Discover candidates and prescreen them as they arrive.
     const stores = [];
-    const candidates = discover(params, { onQuery: () => { progress.queriesDone++; save(); } });
+    const candidates = discover(params, {
+      onQuery: () => { progress.queriesDone++; save(); },
+      onError: (msg) => { progress.searchErrors++; progress.lastSearchError = msg; save(); },
+    });
     const counted = (async function* () { for await (const c of candidates) { progress.candidates++; yield c; } })();
     await pool(counted, config.concurrency, async (c) => {
       const p = await prescreen(c.domain, { regionHint: c.region });
       progress.checked++;
-      if (p.status !== 'not-woocommerce') {
-        const inRegion = !p.region || !params.regions?.length || params.regions.includes(p.region);
-        if (inRegion) {
-          progress.woocommerce++;
-          const text = `${p.fingerprint.title} ${p.fingerprint.metaDescription || ''} ${c.term || ''}`;
-          p.industry = guessIndustry(text, params.industries?.length ? params.industries : Object.keys(INDUSTRIES)) || c.industry;
-          stores.push(p);
-        }
+      if (!['live', 'erroring', 'offline'].includes(p.status)) skip(c.domain, p.status, p.reason);
+      else if (p.region && params.regions?.length && !params.regions.includes(p.region)) skip(c.domain, 'out-of-region', `Detected ${p.region}`, p.region);
+      else {
+        progress.woocommerce++;
+        const text = `${p.fingerprint.title} ${p.fingerprint.metaDescription || ''} ${c.term || ''}`;
+        p.industry = guessIndustry(text, params.industries?.length ? params.industries : Object.keys(INDUSTRIES)) || c.industry;
+        log(c.domain, 'woocommerce', p.fingerprint.detectedVia ? `Found via ${p.fingerprint.detectedVia}` : p.status, p.region);
+        stores.push(p);
       }
       if (progress.checked % 5 === 0) save();
-    });
+    }, crashed);
 
     // 2. Full audits, most promising first, within the scan cap and the monthly quota.
     progress.phase = 'auditing';
     stores.sort((a, b) => prescore(b) - prescore(a));
     const limit = Math.min(config.auditsPerScan, stores.length);
+    for (const p of stores.slice(limit)) log(p.domain, 'not-audited', `Beyond AUDITS_PER_SCAN (${config.auditsPerScan})`, p.region);
     const wanted = new Set(params.signals || []);
     await pool(stores.slice(0, limit), Math.max(2, Math.floor(config.concurrency / 2)), async (p) => {
       const storeId = upsertStore(p);
@@ -82,7 +100,7 @@ export async function runScan(scanId) {
       let row = recent && Date.now() - new Date(recent.created_at + 'Z') < REUSE_AUDIT_MS ? recent : null;
       if (row) progress.reused++;
       else {
-        if (auditsLeft() <= 0) { progress.quotaReached = true; return; }
+        if (auditsLeft() <= 0) { progress.quotaReached = true; log(p.domain, 'not-audited', 'Monthly audit quota reached', p.region); return; }
         consumeAudit();
         const result = await audit(p, { industry: p.industry });
         row = saveAudit(storeId, scanId, result);
@@ -91,11 +109,12 @@ export async function runScan(scanId) {
       const signals = JSON.parse(row.signals);
       const qualified = wanted.size ? signals.some((s) => wanted.has(s)) : signals.length > 0;
       if (qualified) progress.qualified++;
+      log(p.domain, qualified ? 'qualified' : 'healthy', row.main_signal || 'No rebuild signals', JSON.parse(row.facts).region || p.region, row.id);
       db.prepare(`INSERT INTO search_leads (search_id, store_id, audit_id, qualified) VALUES (?, ?, ?, ?)
         ON CONFLICT(search_id, store_id) DO UPDATE SET audit_id = excluded.audit_id, qualified = excluded.qualified`)
         .run(search.id, storeId, row.id, qualified ? 1 : 0);
       save();
-    });
+    }, crashed);
     progress.phase = 'done';
     save('done');
   } catch (e) {

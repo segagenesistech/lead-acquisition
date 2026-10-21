@@ -158,8 +158,40 @@ function progressHtml(s) {
       <dt>Qualified leads</dt><dd>${fmt(p.qualified || 0)}</dd>
     </dl>
     ${p.quotaReached ? '<div class="notice">Monthly audit quota reached; remaining stores were not audited.</div>' : ''}
-    <p><a class="btn small" href="#/leads/${s.id}">View leads →</a></p>
+    ${p.searchErrors ? `<div class="notice">${fmt(p.searchErrors)} search call${p.searchErrors > 1 ? 's' : ''} failed. ${esc(p.lastSearchError || '')}</div>` : ''}
+    ${p.phase === 'done' && !p.candidates ? '<div class="notice">The search returned no websites. Try broader keywords or fewer quoted words.</div>' : ''}
+    ${skippedHtml(p.skipped)}
+    <p><a class="btn small" href="#/leads/${s.id}">View leads →</a> ${s.scan ? `<a class="btn small" href="#/scan/${s.scan.id}">Scan log</a>` : ''}</p>
   </div>`;
+}
+
+const OUTCOME_LABEL = {
+  qualified: 'Qualified lead', healthy: 'Audited, no rebuild signal', woocommerce: 'WooCommerce found', 'not-audited': 'Not audited',
+  blocked: 'Blocked by bot protection', unreachable: 'Unreachable', parked: 'Parked domain', 'server-error': 'Server error',
+  'not-wordpress': 'Not WordPress', 'no-woocommerce': 'WordPress, no WooCommerce', 'out-of-region': 'Outside selected regions', error: 'Check crashed',
+};
+
+function skippedHtml(skipped = {}) {
+  const entries = Object.entries(skipped).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return '';
+  return `<p class="muted" style="margin:14px 0 6px">Skipped</p><dl>${entries.map(([k, n]) => `<dt>${esc(OUTCOME_LABEL[k] || k)}</dt><dd>${fmt(n)}</dd>`).join('')}</dl>`;
+}
+
+async function renderScanLog(id) {
+  const { scan, candidates } = await api(`/api/scans/${id}/candidates`);
+  const p = scan.progress;
+  $app.innerHTML = `<div class="page">
+    <div class="page-head"><div class="crumbs"><a href="#/leads/${scan.searchId}">${esc(scan.name)}</a> / Scan log</div>
+      <span class="status ${esc(scan.status)}">${esc(scan.status)}</span></div>
+    ${scan.error ? `<div class="notice" style="margin-bottom:14px">${esc(scan.error)}</div>` : ''}
+    ${p.searchErrors ? `<div class="notice" style="margin-bottom:14px">${fmt(p.searchErrors)} search calls failed. ${esc(p.lastSearchError || '')}</div>` : ''}
+    <p class="muted">${p.queries ? `${fmt(p.queriesDone || 0)}/${fmt(p.queries)} search queries · ` : ''}${fmt(p.candidates || 0)} websites found · ${fmt(p.checked || 0)} checked · ${fmt(p.woocommerce || 0)} WooCommerce in region · ${fmt((p.audited || 0) + (p.reused || 0))} audited</p>
+    ${candidates.length ? `<table class="table"><thead><tr><th>Website</th><th>Outcome</th><th>Detail</th><th>Region</th></tr></thead><tbody>
+      ${candidates.map((c) => `<tr ${c.auditId ? `data-href="#/audit/${c.auditId}"` : ''}><td class="store-name">${esc(c.domain)}</td><td>${esc(OUTCOME_LABEL[c.outcome] || c.outcome)}</td>
+        <td class="muted">${esc(c.reason || '')}</td><td>${esc(c.region || '—')}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="empty"><strong>No websites were checked</strong>The search returned nothing, or the scan stopped before checking any site. See the message above.</div>'}
+  </div>`;
+  $app.querySelectorAll('tr[data-href]').forEach((tr) => tr.addEventListener('click', () => { location.hash = tr.dataset.href; }));
 }
 
 function watchProgress(searchId) {
@@ -220,7 +252,9 @@ async function renderLeads(id) {
     document.getElementById('count').textContent = `${fmt(rows.length)} qualified lead${rows.length === 1 ? '' : 's'}`;
     const el = document.getElementById('rows');
     if (!rows.length) {
-      el.innerHTML = `<div class="empty"><strong>${running ? 'Scan in progress' : 'No leads match'}</strong>${running ? 'Qualified stores appear here as audits finish.' : 'Try loosening the filters or the rebuild signals.'}</div>`;
+      const why = search.scan && !running ? ` <a href="#/scan/${search.scan.id}">Open the scan log</a> to see why each website was skipped.` : '';
+      el.innerHTML = `<div class="empty"><strong>${running ? 'Scan in progress' : 'No leads match'}</strong>${running ? 'Qualified stores appear here as audits finish.' : `Try loosening the filters or the rebuild signals.${why}`}
+        ${search.scan?.error ? `<div class="notice">${esc(search.scan.error)}</div>` : ''}</div>`;
       return;
     }
     el.innerHTML = `<table class="table leads">
@@ -322,7 +356,7 @@ async function renderExports() {
       <div><h3><a href="#/leads/${s.id}">${esc(s.name)}</a></h3><div class="store-sub">${fmt(s.qualified)} qualified · last run ${esc(s.lastRunAt?.slice(0, 16) || 'never')} UTC
         ${s.scan ? ` · <span class="status ${s.scan.status}">${esc(s.scan.status)}</span>` : ''}</div></div>
       <label class="switch"><input type="checkbox" data-recurring="${s.id}" ${s.recurring ? 'checked' : ''}> Weekly</label>
-      <button class="btn small" data-run="${s.id}">Re-run</button>
+      <span>${s.scan ? `<a class="btn small" href="#/scan/${s.scan.id}">Log</a> ` : ''}<button class="btn small" data-run="${s.id}">Re-run</button></span>
       <a class="btn small primary" href="/api/searches/${s.id}/leads.csv">CSV</a>
     </div>`).join('')}</div>` : '<div class="empty"><strong>Nothing to export yet</strong>Run a search first.</div>'}</div>`;
   $app.querySelectorAll('[data-recurring]').forEach((c) => c.addEventListener('change', async () => {
@@ -342,11 +376,12 @@ async function route() {
   clearTimers();
   if (!meta) await refreshQuota();
   const [, view = '', id] = location.hash.replace(/^#/, '').split('/');
-  const nav = { '': 'search', leads: 'leads', audit: 'audits', audits: 'audits', exports: 'exports' }[view] || 'search';
+  const nav = { '': 'search', leads: 'leads', scan: 'leads', audit: 'audits', audits: 'audits', exports: 'exports' }[view] || 'search';
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === nav));
   window.scrollTo(0, 0);
   try {
     if (view === 'leads') await renderLeads(id);
+    else if (view === 'scan') await renderScanLog(id);
     else if (view === 'audit') await renderAudit(id);
     else if (view === 'audits') await renderAudits();
     else if (view === 'exports') await renderExports();

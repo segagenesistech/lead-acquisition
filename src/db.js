@@ -59,6 +59,15 @@ export function getDb() {
       qualified INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (search_id, store_id)
     );
+    CREATE TABLE IF NOT EXISTS scan_candidates (
+      scan_id INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+      domain TEXT NOT NULL,
+      region TEXT,
+      outcome TEXT NOT NULL,
+      reason TEXT,
+      audit_id INTEGER,
+      PRIMARY KEY (scan_id, domain)
+    );
     CREATE TABLE IF NOT EXISTS usage (
       month TEXT PRIMARY KEY,
       audits INTEGER NOT NULL DEFAULT 0
