@@ -14,26 +14,47 @@ export function providerStatus() {
   return { name, ready: name === 'domains' || Boolean(p?.isConfigured()) };
 }
 
+// Words that describe the search rather than the products. Region is handled by the region chips.
+const FILLER = new Set(['website', 'websites', 'site', 'sites', 'store', 'stores', 'shop', 'shops', 'online', 'ecommerce', 'e-commerce',
+  'brand', 'brands', 'business', 'businesses', 'company', 'companies', 'woocommerce', 'wordpress', 'in', 'the', 'for', 'of', 'and', 'with', 'from', 'based',
+  'us', 'usa', 'america', 'american', 'united', 'states', 'australia', 'australian', 'aus', 'au', 'canada', 'canadian', 'ca']);
+
+/** "Fashion websites in the US" -> "fashion". Falls back to the original text if nothing is left. */
+export function normalizeKeyword(keyword) {
+  const words = String(keyword).toLowerCase().replace(/[^a-z0-9&' -]+/g, ' ').split(/\s+/).filter(Boolean);
+  const kept = words.filter((w) => !FILLER.has(w));
+  return (kept.length ? kept : words).join(' ').trim();
+}
+
+// Exact-phrase quotes help short product terms but make longer phrases match almost nothing.
+const phrase = (term) => (term.split(' ').length <= 3 ? `"${term}"` : term);
+const siteFilter = (region) => (region === 'AU' ? ' site:.au' : region === 'CA' ? ' site:.ca' : '');
+const defaultInurl = () => PROVIDERS[config.discoveryProvider]?.supportsInurl ?? true;
+
 /**
  * Footprint queries per term and region. Engines with inurl: target WooCommerce's default /product/ permalinks;
  * others (Brave) rely on shop wording that WooCommerce themes print on every product page.
  */
-export function buildQueries({ regions = [], keywords = [], industries = [] }, { inurl = PROVIDERS[config.discoveryProvider]?.supportsInurl ?? true } = {}) {
+export function buildQueries({ regions = [], keywords = [], industries = [] }, { inurl = defaultInurl() } = {}) {
   const terms = keywords.length
-    ? keywords.map((k) => ({ term: k, industry: guessIndustry(k, industries) }))
+    ? [...new Set(keywords.map(normalizeKeyword).filter(Boolean))].map((k) => ({ term: k, industry: guessIndustry(k, industries) }))
     : industries.flatMap((i) => (INDUSTRIES[i]?.terms || []).map((t) => ({ term: t, industry: i })));
   const out = [];
   for (const { term, industry } of terms) {
     for (const region of regions) {
-      const site = region === 'AU' ? ' site:.au' : region === 'CA' ? ' site:.ca' : '';
       const usExclusions = region === 'US' && inurl ? ' -site:.au -site:.ca -site:.uk' : '';
       const variants = inurl
-        ? [`"${term}" inurl:product "add to cart"`, `"${term}" "woocommerce"`]
-        : [`"${term}" "add to cart"`, `"${term}" online store "add to cart"`];
-      for (const v of variants) out.push({ q: `${v}${site}${usExclusions}`, term, industry, region });
+        ? [`${phrase(term)} inurl:product "add to cart"`, `${phrase(term)} "woocommerce"`]
+        : [`${phrase(term)} "add to cart"`, `${phrase(term)} online store "add to cart"`];
+      for (const v of variants) out.push({ q: `${v}${siteFilter(region)}${usExclusions}`, term, industry, region, group: `${term}|${region}` });
     }
   }
   return out;
+}
+
+/** Looser query used when a term's footprint queries find nothing in a region. */
+export function fallbackQuery({ term, industry, region, group }) {
+  return { q: `${term} online shop${siteFilter(region)}`, term, industry, region, group, fallback: true };
 }
 
 export function guessIndustry(text, allowed = Object.keys(INDUSTRIES)) {
@@ -109,7 +130,7 @@ async function searchWithRetry(provider, q, opts, onError) {
 /**
  * Yields candidate domains as { domain, term, industry, region } until the queries are exhausted.
  */
-export async function* discover(params, { onQuery, onError } = {}) {
+export async function* discover(params, { onQuery, onError, onResults } = {}) {
   const seen = new Set();
   if (params.domains?.length) {
     for (const raw of params.domains) {
@@ -123,18 +144,33 @@ export async function* discover(params, { onQuery, onError } = {}) {
   let calls = 0;
   let failures = 0;
   let lastError = null;
-  for (const query of buildQueries(params)) {
+  const found = {};
+  const run = async function* (query) {
     onQuery?.(query);
+    let raw = 0;
     for (let page = 0; page < PAGES_PER_QUERY; page++) {
       calls++;
       const urls = await searchWithRetry(provider, query.q, { region: query.region, gl: REGIONS[query.region]?.gl, page }, (msg) => { failures++; lastError = msg; onError?.(msg); });
       if (!urls) break;
+      raw += urls.length;
       for (const url of urls) {
         const domain = cleanDomain(url);
-        if (domain && !seen.has(domain)) { seen.add(domain); yield { domain, ...query }; }
+        if (domain && !seen.has(domain)) {
+          seen.add(domain);
+          found[query.group] = (found[query.group] || 0) + 1;
+          yield { domain, ...query };
+        }
       }
       if (urls.length < 10) break;
     }
+    onResults?.(query, raw);
+  };
+  const queries = buildQueries(params);
+  for (const [i, query] of queries.entries()) {
+    yield* run(query);
+    // After the last strict query of a term/region, relax the search if it found nothing.
+    const lastOfGroup = queries[i + 1]?.group !== query.group;
+    if (lastOfGroup && !found[query.group]) yield* run(fallbackQuery(query));
   }
   if (!seen.size && failures) throw new DiscoveryError(`Every search call failed (${failures}/${calls}). Last error: ${lastError}`);
 }

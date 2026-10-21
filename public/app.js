@@ -51,7 +51,7 @@ function renderSearch() {
         <div class="chips" role="group" aria-labelledby="l-regions">${Object.entries(meta.regions).map(([k, r]) => `<button class="chip" data-region="${k}" aria-pressed="${form.regions.includes(k)}">${esc(r.label)}</button>`).join('')}</div>
       </div>
       <div class="field"><label for="kw">Keywords</label>
-        <div class="tag-input" id="tags"><input id="kw" placeholder="Add keyword…" autocomplete="off"></div>
+        <div class="tag-input" id="tags"><input id="kw" placeholder="Add a product keyword, e.g. linen dresses" autocomplete="off"></div>
       </div>
       <div class="field"><span class="label" id="l-ind">E-commerce industry</span>
         <div class="chips" role="group" aria-labelledby="l-ind">${Object.entries(meta.industries).map(([k, i]) => `<button class="chip pill" data-industry="${k}" aria-pressed="${form.industries.includes(k)}">${esc(i.label)}</button>`).join('')}</div>
@@ -159,7 +159,10 @@ function progressHtml(s) {
     </dl>
     ${p.quotaReached ? '<div class="notice">Monthly audit quota reached; remaining stores were not audited.</div>' : ''}
     ${p.searchErrors ? `<div class="notice">${fmt(p.searchErrors)} search call${p.searchErrors > 1 ? 's' : ''} failed. ${esc(p.lastSearchError || '')}</div>` : ''}
-    ${p.phase === 'done' && !p.candidates ? '<div class="notice">The search returned no websites. Try broader keywords or fewer quoted words.</div>' : ''}
+    ${p.phase === 'done' && !p.candidates ? `<div class="notice">${p.searchResults
+      ? `The search returned ${fmt(p.searchResults)} results, but all were marketplaces or excluded sites.`
+      : 'The search returned no websites.'} Use short product keywords such as “linen dresses”; pick the country with the region buttons.</div>` : ''}
+    ${p.emptyQueries?.length ? `<details class="empty-queries"><summary>${fmt(p.emptyQueries.length)} search${p.emptyQueries.length > 1 ? 'es' : ''} found nothing</summary>${p.emptyQueries.map((q) => `<div class="mono">${esc(q)}</div>`).join('')}</details>` : ''}
     ${skippedHtml(p.skipped)}
     <p><a class="btn small" href="#/leads/${s.id}">View leads →</a> ${s.scan ? `<a class="btn small" href="#/scan/${s.scan.id}">Scan log</a>` : ''}</p>
   </div>`;
@@ -184,6 +187,7 @@ async function renderScanLog(id) {
     <div class="page-head"><div class="crumbs"><a href="#/leads/${scan.searchId}">${esc(scan.name)}</a> / Scan log</div>
       <span class="status ${esc(scan.status)}">${esc(scan.status)}</span></div>
     ${scan.error ? `<div class="notice" style="margin-bottom:14px">${esc(scan.error)}</div>` : ''}
+    ${p.emptyQueries?.length ? `<div class="notice" style="margin-bottom:14px">These searches found nothing:${p.emptyQueries.map((q) => `<div class="mono">${esc(q)}</div>`).join('')}</div>` : ''}
     ${p.searchErrors ? `<div class="notice" style="margin-bottom:14px">${fmt(p.searchErrors)} search calls failed. ${esc(p.lastSearchError || '')}</div>` : ''}
     <p class="muted">${p.queries ? `${fmt(p.queriesDone || 0)}/${fmt(p.queries)} search queries · ` : ''}${fmt(p.candidates || 0)} websites found · ${fmt(p.checked || 0)} checked · ${fmt(p.woocommerce || 0)} WooCommerce in region · ${fmt((p.audited || 0) + (p.reused || 0))} audited</p>
     ${candidates.length ? `<table class="table"><thead><tr><th>Website</th><th>Outcome</th><th>Detail</th><th>Region</th></tr></thead><tbody>

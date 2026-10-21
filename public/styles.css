@@ -72,6 +72,9 @@ details.import textarea { width: 100%; max-width: 560px; height: 110px; margin-t
 .progress .bar i { display: block; height: 100%; background: var(--teal); transition: width .4s; }
 .progress dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin: 0; }
 .progress dd { margin: 0; font-family: var(--mono); text-align: right; }
+.empty-queries { font-size: 11px; margin-top: 10px; color: var(--muted); }
+.empty-queries summary { cursor: pointer; }
+.empty-queries .mono { margin-top: 4px; word-break: break-word; }
 .notice { font-size: 12px; background: var(--high-bg); color: var(--high-fg); padding: 9px 11px; border-radius: 4px; margin-top: 14px; }
 
 .btn { border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); padding: 10px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; text-decoration: none; text-align: center; display: inline-block; }

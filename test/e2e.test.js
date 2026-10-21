@@ -109,3 +109,12 @@ test('a rejected search API key fails the scan with a clear message', { timeout:
   assert.equal(s.scan.status, 'failed');
   assert.match(s.scan.error, /rejected the key \(HTTP 401\).*SUBSCRIPTION_TOKEN_INVALID/);
 });
+
+test('falls back to a looser search when strict queries find nothing', { timeout: 120000 }, async () => {
+  const url = await startApp({ DISCOVERY_PROVIDER: 'brave', BRAVE_API_KEY: 'good-key' });
+  const s = await runSearch(url, { regions: ['US'], keywords: ['Rare widgets websites in the US'], industries: [], signals: ['broken_checkout'] });
+  assert.equal(s.scan.status, 'done', s.scan.error);
+  assert.equal(s.scan.progress.queries, 3, 'two strict queries plus one fallback');
+  assert.equal(s.scan.progress.emptyQueries.length, 2);
+  assert.equal(s.scan.progress.candidates, 2);
+});

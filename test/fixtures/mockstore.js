@@ -98,6 +98,8 @@ function apiHandler(apiBase) {
       // Every query is rate-limited once before it succeeds.
       const q = url.searchParams.get('q') + url.searchParams.get('offset');
       if (!seenQueries.has(q)) { seenQueries.add(q); res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' }); return res.end('{}'); }
+      // Strict searches for "rare widgets" find nothing; only the loose fallback does.
+      if (/rare widgets/.test(q) && !/online shop/.test(q)) return json(200, { web: { results: [] } });
       return json(200, { web: { results: ['https://lunaroots.test/product/item-1/', 'https://healthy.test/', 'https://www.amazon.com/dp/1'].map((u) => ({ url: u })) } });
     }
     if (p === '/core/version-check/1.7/') return json(200, { offers: [{ current: '6.8.3' }] });

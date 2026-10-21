@@ -69,7 +69,11 @@ export async function runScan(scanId) {
     // 1. Discover candidates and prescreen them as they arrive.
     const stores = [];
     const candidates = discover(params, {
-      onQuery: () => { progress.queriesDone++; save(); },
+      onQuery: (q) => { if (q.fallback) progress.queries++; progress.queriesDone++; save(); },
+      onResults: (q, raw) => {
+        progress.searchResults = (progress.searchResults || 0) + raw;
+        if (!raw) progress.emptyQueries = [...(progress.emptyQueries || []), q.q].slice(-10);
+      },
       onError: (msg) => { progress.searchErrors++; progress.lastSearchError = msg; save(); },
     });
     const counted = (async function* () { for await (const c of candidates) { progress.candidates++; yield c; } })();

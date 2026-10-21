@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 process.env.DB_PATH = ':memory:';
-const { buildQueries, cleanDomain, guessIndustry, estimateScope } = await import('../src/discovery/index.js');
+const { buildQueries, cleanDomain, guessIndustry, estimateScope, normalizeKeyword, fallbackQuery } = await import('../src/discovery/index.js');
 
 test('builds region-scoped footprint queries per keyword', () => {
   const q = buildQueries({ regions: ['US', 'AU'], keywords: ['organic skincare'], industries: ['health-beauty'] });
@@ -38,4 +38,19 @@ test('scope estimate scales with queries', () => {
 test('queries avoid inurl: for engines that do not support it', () => {
   const q = buildQueries({ regions: ['US'], keywords: ['tea'], industries: [] }, { inurl: false });
   assert.ok(q.length === 2 && q.every((x) => !x.q.includes('inurl:') && !x.q.includes('-site:')));
+});
+
+test('keywords drop filler and location words', () => {
+  assert.equal(normalizeKeyword('Fashion websites in the US'), 'fashion');
+  assert.equal(normalizeKeyword('organic skincare stores Australia'), 'organic skincare');
+  assert.equal(normalizeKeyword('online store'), 'online store');
+  assert.equal(normalizeKeyword('Dog treats & chews'), 'dog treats & chews');
+});
+
+test('long phrases are not exact-quoted; fallback query is loose', () => {
+  const [q] = buildQueries({ regions: ['AU'], keywords: ['handmade organic cotton baby clothes'], industries: [] }, { inurl: false });
+  assert.ok(q.q.startsWith('handmade organic cotton baby clothes "add to cart"'));
+  assert.equal(fallbackQuery(q).q, 'handmade organic cotton baby clothes online shop site:.au');
+  const [short] = buildQueries({ regions: ['US'], keywords: ['Fashion websites in the US'], industries: [] }, { inurl: false });
+  assert.equal(short.q, '"fashion" "add to cart"');
 });
