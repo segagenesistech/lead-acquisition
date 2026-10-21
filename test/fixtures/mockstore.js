@@ -22,6 +22,9 @@ export const STORES = {
   'kookaburra.test': { title: 'Kookaburra Tea Co — loose leaf tea', currency: 'AUD', wc: '10.2.1', wp: '6.8.3', plugins: {}, theme: 'kookatheme', products: 30, price: 2400, paymentMethods: [] },
   'healthy.test': { title: 'A healthy skincare store', currency: 'USD', wc: '10.2.1', wp: '6.8.3', plugins: {}, theme: 'storefront', products: 50, price: 3000 },
   'notwoo.test': { title: 'Just a blog', notWoo: true },
+  // Larger businesses: a big catalogue, and a site in the test Tranco list's top 500.
+  'bigbrand.test': { title: 'Big Brand skincare', currency: 'USD', wc: '6.1.0', wp: '6.8.3', plugins: {}, theme: 'storefront', products: 5000, price: 3000, checkout: 500 },
+  'popular.test': { title: 'Popular skincare', currency: 'USD', wc: '6.1.0', wp: '6.8.3', plugins: {}, theme: 'storefront', products: 200, price: 3000, checkout: 500 },
   // Live store behind a firewall that rejects crawlers; the Wayback Machine also knows it as WooCommerce.
   'blockedstore.test': { title: 'Blocked', blocked: true },
   // Optimisation plugin strips WooCommerce assets from the homepage; only /wp-json/ reveals the store.
@@ -161,6 +164,7 @@ export async function startMocks() {
       NODE_EXTRA_CA_CERTS: join(here, 'ca.pem'),
       BRAVE_API: apiBase, WPORG_API: apiBase, RDAP_API: apiBase, PAGESPEED_API: `${apiBase}/pagespeed`, WAYBACK_API: apiBase,
       DISCOVERY_PROVIDER: 'domains',
+      TRANCO_PATH: join(here, 'tranco.csv'),
     },
     close: () => [httpsSrv, httpSrv, apiSrv].forEach((s) => s.close()),
   };

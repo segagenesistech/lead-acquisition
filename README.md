@@ -15,6 +15,7 @@ npm test                 # unit tests + end-to-end scan against local mock store
 1. **Discover**: for every keyword (or industry term) × region it runs two footprint queries through your search provider: `"organic skincare" inurl:product "add to cart" site:.au` on Google/SerpApi, or `"organic skincare" "add to cart" site:.au` on Brave, which has no `inurl:`. Calls are paced and rate-limit responses are retried. Marketplaces (Amazon, Etsy…) are dropped and results are deduplicated to registrable domains (`shop.x.com.au` → `x.com.au`). You can also skip search and paste your own domain list.
 2. **Prescreen** (cheap): fetches the homepage, confirms WordPress + WooCommerce (falling back to `/wp-json/` and `/shop/` when an optimisation plugin hides WooCommerce on the homepage), and assigns a region from the ccTLD (`.com.au`, `.ca`), then the store currency, then the search region. Dead or parked domains are checked against the Wayback Machine, so stores that *used* to run WooCommerce still qualify as lapsed leads.
 3. **Full audit** (top `AUDITS_PER_SCAN`, within the `MONTHLY_AUDIT_QUOTA`), most promising first. An audit less than 7 days old is reused and does not use quota.
+   With **Small businesses only** (on by default), a store is skipped before its audit, using no quota, if its catalogue has more than `SMALL_MAX_PRODUCTS` products (default 1,000, from the public WooCommerce Store API) or its Tranco rank is in the top `SMALL_MAX_TRANCO_RANK` (default 100,000; needs `data/tranco.csv`). Skipped stores appear in the scan log as "Larger business".
 4. **Qualify**: a store becomes a lead if it shows at least one of the rebuild signals you ticked.
 
 ## What each signal checks
@@ -50,9 +51,14 @@ Tune the industry benchmarks in `src/config.js` and the loss fractions in `src/a
 | `WPSCAN_API_TOKEN` | Optional; adds known-vulnerability checks for outdated plugins |
 | `MONTHLY_AUDIT_QUOTA`, `AUDITS_PER_SCAN`, `SCAN_CONCURRENCY` | Limits |
 | `CONTACT_EMAIL` | Added to the crawler User-Agent so site owners can contact you |
+| `SMALL_MAX_PRODUCTS`, `SMALL_MAX_TRANCO_RANK` | Thresholds for "Small businesses only" |
 | `SEARCH_MIN_INTERVAL_MS` | Gap between search API calls (default 1100, which suits Brave's free plan; lower it on paid plans) |
 
 Recurring searches re-run weekly. The scheduler checks every 10 minutes while the server is running.
+
+## Choosing keywords
+
+Use short product terms, as narrow as you can: "linen dresses", "beeswax wraps", "small batch hot sauce", not "fashion websites in the US". The app adds the WooCommerce footprint itself, the region buttons set the country, and niche products surface small independent stores rather than big brands and marketplaces. Match local spelling (*jewellery* and *homewares* for AU/CA, *jewelry* for US), and add several related keywords per search, since each one is searched separately.
 
 ## Troubleshooting a scan with no leads
 

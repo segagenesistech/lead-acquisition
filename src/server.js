@@ -6,6 +6,7 @@ import { getDb, auditsLeft } from './db.js';
 import { estimateScope, providerStatus, buildQueries } from './discovery/index.js';
 import { startScan, startScheduler } from './scanner.js';
 import { riskLevel } from './audit/scoring.js';
+import { hasTranco } from './audit/tranco.js';
 
 const PUBLIC = join(ROOT, 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
@@ -30,6 +31,7 @@ function cleanParams(b) {
     industries: list(b.industries, Object.keys(INDUSTRIES)),
     signals: list(b.signals, Object.keys(SIGNALS)),
     domains: list(b.domains).slice(0, 5000),
+    smallOnly: Boolean(b.smallOnly),
   };
 }
 
@@ -83,7 +85,8 @@ function searchSummary(s) {
 }
 
 const routes = [
-  ['GET', /^\/api\/meta$/, () => ({ regions: REGIONS, industries: INDUSTRIES, signals: SIGNALS, auditsLeft: auditsLeft(), quota: config.monthlyQuota, auditsPerScan: config.auditsPerScan, provider: providerStatus() })],
+  ['GET', /^\/api\/meta$/, () => ({ regions: REGIONS, industries: INDUSTRIES, signals: SIGNALS, auditsLeft: auditsLeft(), quota: config.monthlyQuota, auditsPerScan: config.auditsPerScan, provider: providerStatus(),
+    small: { maxTrancoRank: config.smallMaxTrancoRank, maxProducts: config.smallMaxProducts, tranco: hasTranco() } })],
   ['POST', /^\/api\/estimate$/, async (req) => {
     const p = cleanParams(await readJson(req));
     return { candidates: estimateScope(p), queries: buildQueries(p).length };

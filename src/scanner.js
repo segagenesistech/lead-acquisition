@@ -1,7 +1,7 @@
 import { config, INDUSTRIES } from './config.js';
 import { getDb, auditsLeft, consumeAudit } from './db.js';
 import { discover, buildQueries, guessIndustry } from './discovery/index.js';
-import { prescreen, audit } from './audit/index.js';
+import { prescreen, audit, businessSize } from './audit/index.js';
 import { compareVersions } from './audit/detect.js';
 
 const REUSE_AUDIT_MS = 7 * 86400e3;
@@ -82,6 +82,7 @@ export async function runScan(scanId) {
       progress.checked++;
       if (!['live', 'erroring', 'offline'].includes(p.status)) skip(c.domain, p.status, p.reason);
       else if (p.region && params.regions?.length && !params.regions.includes(p.region)) skip(c.domain, 'out-of-region', `Detected ${p.region}`, p.region);
+      else if (params.smallOnly && (p.size = await businessSize(p)).large) skip(c.domain, 'too-large', p.size.reason, p.region);
       else {
         progress.woocommerce++;
         const text = `${p.fingerprint.title} ${p.fingerprint.metaDescription || ''} ${c.term || ''}`;

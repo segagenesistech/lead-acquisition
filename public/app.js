@@ -35,7 +35,7 @@ async function refreshQuota() {
 
 /* ---------- New search ---------- */
 
-const DEFAULT_FORM = { regions: ['US', 'AU', 'CA'], keywords: [], industries: [], signals: ['expired_ssl', 'domain_expiring', 'outdated_woo', 'broken_checkout'], domains: '' };
+const DEFAULT_FORM = { regions: ['US', 'AU', 'CA'], keywords: [], industries: [], signals: ['expired_ssl', 'domain_expiring', 'outdated_woo', 'broken_checkout'], domains: '', smallOnly: true };
 
 function renderSearch() {
   const form = { ...DEFAULT_FORM, ...store.get('lf:draft', {}) };
@@ -58,6 +58,10 @@ function renderSearch() {
       </div>
       <div class="field"><span class="label">Rebuild signals</span>
         <div class="signals">${Object.entries(meta.signals).map(([k, s]) => `<label class="check"><input type="checkbox" data-signal="${k}" ${form.signals.includes(k) ? 'checked' : ''}> ${esc(s.label)}</label>`).join('')}</div>
+      </div>
+      <div class="field"><span class="label">Business size</span>
+        <div><label class="check"><input type="checkbox" id="small" ${form.smallOnly ? 'checked' : ''}> Small businesses only</label></div>
+        <p class="hint">Skips stores with more than ${fmt(meta.small.maxProducts)} products${meta.small.tranco ? ` or a Tranco traffic rank in the top ${fmt(meta.small.maxTrancoRank)}` : '. Add data/tranco.csv to also skip high-traffic sites'}.</p>
       </div>
       <details class="import" ${form.domains || !providerReady ? 'open' : ''}>
         <summary>Or audit your own list of domains</summary>
@@ -104,18 +108,19 @@ function renderSearch() {
   $app.querySelectorAll('[data-region]').forEach((b) => b.addEventListener('click', () => { toggle(form.regions, b.dataset.region); b.setAttribute('aria-pressed', form.regions.includes(b.dataset.region)); changed(); }));
   $app.querySelectorAll('[data-industry]').forEach((b) => b.addEventListener('click', () => { toggle(form.industries, b.dataset.industry); b.setAttribute('aria-pressed', form.industries.includes(b.dataset.industry)); changed(); }));
   $app.querySelectorAll('[data-signal]').forEach((c) => c.addEventListener('change', () => { toggle(form.signals, c.dataset.signal); changed(); }));
+  document.getElementById('small').addEventListener('change', (e) => { form.smallOnly = e.target.checked; changed(); });
   document.getElementById('domains').addEventListener('input', (e) => { form.domains = e.target.value; changed(); });
 
   const domainList = () => form.domains.split(/[\s,]+/).map((d) => d.trim()).filter(Boolean);
-  const payload = () => ({ regions: form.regions, keywords: form.keywords, industries: form.industries, signals: form.signals, domains: domainList() });
+  const payload = () => ({ regions: form.regions, keywords: form.keywords, industries: form.industries, signals: form.signals, domains: domainList(), smallOnly: form.smallOnly });
   let estTimer;
   function changed() {
     save();
     const n = (a, w) => `${a.length} ${w}${a.length === 1 ? '' : 's'}`;
     const d = domainList();
     document.getElementById('scope-lines').innerHTML = d.length
-      ? `${n(d, 'imported domain')}<br>${n(form.signals, 'rebuild signal')}<br>Full audit of top ${fmt(Math.min(meta.auditsPerScan, d.length))} by revenue risk`
-      : `${n(form.regions, 'region')} · ${n(form.keywords, 'keyword')} · ${form.industries.length} ${form.industries.length === 1 ? 'industry' : 'industries'}<br>${n(form.signals, 'rebuild signal')}<br>Full audit of top ${fmt(meta.auditsPerScan)} by revenue risk`;
+      ? `${n(d, 'imported domain')}<br>${n(form.signals, 'rebuild signal')}${form.smallOnly ? ' · small businesses' : ''}<br>Full audit of top ${fmt(Math.min(meta.auditsPerScan, d.length))} by revenue risk`
+      : `${n(form.regions, 'region')} · ${n(form.keywords, 'keyword')} · ${form.industries.length} ${form.industries.length === 1 ? 'industry' : 'industries'}<br>${n(form.signals, 'rebuild signal')}${form.smallOnly ? ' · small businesses' : ''}<br>Full audit of top ${fmt(meta.auditsPerScan)} by revenue risk`;
     clearTimeout(estTimer);
     estTimer = setTimeout(async () => {
       try {
@@ -171,7 +176,7 @@ function progressHtml(s) {
 const OUTCOME_LABEL = {
   qualified: 'Qualified lead', healthy: 'Audited, no rebuild signal', woocommerce: 'WooCommerce found', 'not-audited': 'Not audited',
   blocked: 'Blocked by bot protection', unreachable: 'Unreachable', parked: 'Parked domain', 'server-error': 'Server error',
-  'not-wordpress': 'Not WordPress', 'no-woocommerce': 'WordPress, no WooCommerce', 'out-of-region': 'Outside selected regions', error: 'Check crashed',
+  'not-wordpress': 'Not WordPress', 'no-woocommerce': 'WordPress, no WooCommerce', 'out-of-region': 'Outside selected regions', 'too-large': 'Larger business', error: 'Check crashed',
 };
 
 function skippedHtml(skipped = {}) {

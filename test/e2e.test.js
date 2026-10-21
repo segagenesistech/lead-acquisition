@@ -118,3 +118,22 @@ test('falls back to a looser search when strict queries find nothing', { timeout
   assert.equal(s.scan.progress.emptyQueries.length, 2);
   assert.equal(s.scan.progress.candidates, 2);
 });
+
+test('"small businesses only" skips big catalogues and high-traffic sites before auditing', { timeout: 120000 }, async () => {
+  const url = await startApp();
+  const domains = ['lunaroots.test', 'bigbrand.test', 'popular.test'];
+  const before = (await (await fetch(url + '/api/meta')).json()).auditsLeft;
+  const small = await runSearch(url, { domains, regions: ['US'], signals: ['broken_checkout'], smallOnly: true });
+  assert.equal(small.scan.status, 'done', small.scan.error);
+  assert.equal(small.scan.progress.skipped['too-large'], 2);
+  const log = (await (await fetch(`${url}/api/scans/${small.scan.id}/candidates`)).json()).candidates;
+  const reason = Object.fromEntries(log.map((c) => [c.domain, c.reason]));
+  assert.match(reason['bigbrand.test'], /5,000 products/);
+  assert.match(reason['popular.test'], /Tranco rank 500/);
+  const after = (await (await fetch(url + '/api/meta')).json()).auditsLeft;
+  assert.equal(before - after, 1, 'skipped stores use no audit quota');
+
+  const all = await runSearch(url, { domains, regions: ['US'], signals: ['broken_checkout'], smallOnly: false });
+  assert.equal(all.scan.progress.skipped['too-large'], undefined);
+  assert.equal(all.qualified, 3);
+});

@@ -29,6 +29,10 @@ export const config = {
   monthlyQuota: Number(env('MONTHLY_AUDIT_QUOTA', 500)),
   auditsPerScan: Number(env('AUDITS_PER_SCAN', 300)),
   concurrency: Number(env('SCAN_CONCURRENCY', 8)),
+  // "Small businesses only": skip stores above either threshold.
+  smallMaxTrancoRank: Number(env('SMALL_MAX_TRANCO_RANK', 100000)),
+  smallMaxProducts: Number(env('SMALL_MAX_PRODUCTS', 1000)),
+  trancoPath: env('TRANCO_PATH', join(ROOT, 'data', 'tranco.csv')),
   // A browser-style UA (many store firewalls reject bare bot UAs) that still names the crawler for robots.txt and site owners.
   userAgent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 LeadforgeBot/1.0${env('CONTACT_EMAIL', '') ? ' (+mailto:' + env('CONTACT_EMAIL') + ')' : ''}`,
   // Minimum gap between search API calls; Brave's free plan allows 1 request per second.

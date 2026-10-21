@@ -1,4 +1,5 @@
-import { REGIONS } from '../config.js';
+import { REGIONS, config } from '../config.js';
+import { trancoRank } from './tranco.js';
 import { request, inspectCertificate, CookieJar } from './http.js';
 import { fingerprint, parseThemeStyle, productStructuredData, mixedContent, versionLag, registrableDomain, isParked } from './detect.js';
 import { latestWordPress, pluginInfo, themeInfo, pluginVulnerabilities, domainRegistration, pagespeed, waybackSnapshot, robots } from './sources.js';
@@ -79,6 +80,22 @@ export async function prescreen(domain, { regionHint } = {}) {
   if (home.error) return reject('unreachable', `${home.error}${home.message ? `: ${home.message.slice(0, 80)}` : ''}`);
   if (fp.parked) return reject('parked', 'Parked or for-sale page');
   return reject(home.status >= 500 ? 'server-error' : 'not-wordpress', `HTTP ${home.status}`);
+}
+
+/**
+ * Is this a larger business? Uses the Tranco traffic rank (if data/tranco.csv exists) and the catalogue size
+ * reported by the WooCommerce Store API. One request; runs before the full audit so large stores use no quota.
+ */
+export async function businessSize(pre) {
+  const rank = trancoRank(pre.domain);
+  if (rank && rank <= config.smallMaxTrancoRank) return { large: true, rank, reason: `Tranco rank ${rank.toLocaleString('en-US')} (top ${config.smallMaxTrancoRank.toLocaleString('en-US')})` };
+  if (pre.status !== 'live' || !pre.origin) return { large: false, rank };
+  const allowed = await robots(pre.origin);
+  if (!allowed('/wp-json/wc/store/v1/products')) return { large: false, rank };
+  const res = await request(`${pre.origin}/wp-json/wc/store/v1/products?per_page=1`, { timeout: 12000, headers: { accept: 'application/json' } });
+  const products = res.status === 200 ? Number(res.headers['x-wp-total']) || null : null;
+  if (products && products > config.smallMaxProducts) return { large: true, rank, products, reason: `${products.toLocaleString('en-US')} products (over ${config.smallMaxProducts.toLocaleString('en-US')})` };
+  return { large: false, rank, products };
 }
 
 /** Full audit of a prescreened store. Returns { facts, findings, ...score }. */
